@@ -257,30 +257,40 @@ func (a *App) PatchConversationConfig(ctx context.Context, binding ConversationC
 	if patch.CustomAgentID == nil && patch.ProfileID == nil && patch.ThinkingLevel == nil && patch.ApprovalMode == nil {
 		return conversationconfig.Snapshot{}, errors.New("conversation config changes are empty")
 	}
+	if patch.ProfileID != nil || patch.ThinkingLevel != nil {
+		a.modelSelectionMu.Lock()
+		defer a.modelSelectionMu.Unlock()
+	}
 	change := conversationconfig.Patch{
 		CustomAgentID: patch.CustomAgentID,
 		ProfileID:     patch.ProfileID,
 		ThinkingLevel: patch.ThinkingLevel,
 		ApprovalMode:  patch.ApprovalMode,
 	}
+	var snapshot conversationconfig.Snapshot
+	var err error
 	switch normalizeConversationMode(binding.Mode) {
 	case ConversationModeWriting:
 		if err := a.requireForegroundConversationProject(binding.ProjectID); err != nil {
 			return conversationconfig.Snapshot{}, err
 		}
-		return a.patchWritingConversationConfig(binding, change, baseRevision)
+		snapshot, err = a.patchWritingConversationConfig(binding, change, baseRevision)
 	case ConversationModeAgentChat:
-		return a.AgentChat().PatchConversationConfig(ctx, agentchatapp.Binding{
+		snapshot, err = a.AgentChat().PatchConversationConfig(ctx, agentchatapp.Binding{
 			ProjectID: binding.ProjectID, SessionID: binding.SessionID,
 		}, change, baseRevision)
 	case ConversationModeInteractive:
 		if err := a.requireForegroundConversationProject(binding.ProjectID); err != nil {
 			return conversationconfig.Snapshot{}, err
 		}
-		return a.patchInteractiveConversationConfig(binding, change, baseRevision)
+		snapshot, err = a.patchInteractiveConversationConfig(binding, change, baseRevision)
 	default:
 		return conversationconfig.Snapshot{}, fmt.Errorf("unsupported conversation mode %q", binding.Mode)
 	}
+	if err != nil {
+		return snapshot, err
+	}
+	return snapshot, a.rememberConversationModel(snapshot, change)
 }
 
 func (a *App) requireForegroundConversationProject(projectID string) error {
@@ -364,6 +374,21 @@ func (a *App) patchInteractiveConversationConfig(binding ConversationConfigBindi
 	service := a.interactiveService()
 	service.admission.Lock()
 	defer service.admission.Unlock()
+	if strings.TrimSpace(binding.StoryID) == "" {
+		if baseRevision != 0 || patch.CustomAgentID != nil || patch.ApprovalMode != nil {
+			return conversationconfig.Snapshot{}, errors.New("a Game draft only accepts model preferences")
+		}
+		store, runtimeCfg, err := a.interactiveStoreRuntime()
+		if err != nil {
+			return conversationconfig.Snapshot{}, err
+		}
+		seed, err := interactiveapp.RecentConversationSeed(store, &runtimeCfg, "")
+		if err != nil {
+			return conversationconfig.Snapshot{}, err
+		}
+		next, err := conversationconfig.Merge(&runtimeCfg, seed, patch)
+		return conversationconfig.Snapshot{Config: next}, err
+	}
 	store, runtimeCfg, err := a.interactiveConversationRuntime(binding)
 	if err != nil {
 		return conversationconfig.Snapshot{}, err

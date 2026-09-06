@@ -103,6 +103,7 @@ describe('NewStorySetupPanel', () => {
   it('submits a Lore protagonist snapshot source and opening from one start flow', async () => {
     const user = userEvent.setup()
     const onCreate = vi.fn().mockResolvedValue(undefined)
+    const controller = conversationConfigController()
     render(
       <NewStorySetupPanel
         projectId="project-1"
@@ -111,7 +112,7 @@ describe('NewStorySetupPanel', () => {
         imagePresets={[{ version: 1, id: 'game-cg', name: 'Game CG', description: '', custom: false }]}
         loreItems={[loreCharacter, alternateCharacter]}
         bookOpeningPresets={[{ id: 'harbor', title: '雾港来信', content: '港口的灯逐盏熄灭。' }]}
-        conversationConfig={conversationConfigController()}
+        conversationConfig={controller}
         onCancel={vi.fn()}
         onCreate={onCreate}
       />,
@@ -130,8 +131,11 @@ describe('NewStorySetupPanel', () => {
     await waitFor(() => expect(modelSelect).toBeEnabled())
     await user.click(modelSelect)
     await user.click(await screen.findByRole('option', { name: /创意模型/ }))
+    await waitFor(() => expect(controller.patch).toHaveBeenCalledWith({ profile_id: 'creative' }))
     await user.click(screen.getByRole('combobox', { name: '思考强度' }))
     await user.click(await screen.findByRole('option', { name: '高' }))
+    await waitFor(() => expect(controller.patch).toHaveBeenCalledWith({ thinking_level: 'high' }))
+    expect(onCreate).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: '开始故事' }))
 
     await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1))

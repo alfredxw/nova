@@ -56,7 +56,7 @@ const storyPicker = {
   'storyPicker.setup.advanced.imagesOff': '手动配图',
   'storyPicker.setup.model.profile': '模型配置',
   'storyPicker.setup.model.thinking': '思考强度',
-  'storyPicker.setup.model.description': '所选模型会生成第一幕，并继续用于之后的回合。',
+  'storyPicker.setup.model.description': '用于当前故事；模型和思考强度也会记住，用于新故事。',
   'storyPicker.setup.model.loading': '正在读取最近使用的游戏配置…',
   'storyPicker.setup.model.loadFailed': '无法读取开局模型配置，请重试。',
   'storyPicker.setup.model.catalogFailed': '无法读取模型列表；可重试，或保持当前配置开始故事。',

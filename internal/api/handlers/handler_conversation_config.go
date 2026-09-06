@@ -68,6 +68,8 @@ func bindConversationConfigProject(c *app.RequestContext, binding *appsvc.Conver
 
 func writeConversationConfigError(c *app.RequestContext, err error) {
 	switch {
+	case errors.Is(err, appsvc.ErrConversationModelDefaultsNotSaved):
+		writeErrorKey(c, consts.StatusInternalServerError, "api.conversationConfig.rememberModelFailed")
 	case appsvc.IsConversationConfigRevisionConflict(err):
 		writeErrorKey(c, consts.StatusConflict, "api.conversationConfig.revisionConflict")
 	case errors.Is(err, appsvc.ErrNoWorkspace), errors.Is(err, appsvc.ErrNoWorkspaceOpen):

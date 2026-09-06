@@ -18,6 +18,11 @@ func RecentConversationSeed(store *interactive.Store, runtimeCfg *config.Config,
 			return conversationconfig.Config{}, err
 		}
 		if ok {
+			// Keep the existing Agent/permission inheritance, but resolve the
+			// model from the user's remembered selection across all Projects.
+			defaults := conversationconfig.Default(runtimeCfg, config.AgentKindInteractiveStory)
+			recent.ProfileID = defaults.ProfileID
+			recent.ThinkingLevel = defaults.ThinkingLevel
 			if err := conversationconfig.Validate(runtimeCfg, recent, config.AgentKindInteractiveStory); err == nil {
 				return recent, nil
 			} else {

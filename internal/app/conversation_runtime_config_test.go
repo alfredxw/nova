@@ -126,7 +126,7 @@ func TestAppAllowsConversationConfigUpdatesDuringWritingAndGameRuns(t *testing.T
 	}
 }
 
-func TestNewConversationInheritsLatestSameKindWithoutChangingOlderSessions(t *testing.T) {
+func TestNewConversationUsesModelDefaultDespiteOlderSessionActivity(t *testing.T) {
 	store, err := session.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -155,8 +155,10 @@ func TestNewConversationInheritsLatestSameKindWithoutChangingOlderSessions(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inherited.Revision != 1 || inherited.Config != configuredFirst.Config {
-		t.Fatalf("new writing conversation did not inherit latest selection: %#v", inherited)
+	expected := configuredFirst.Config
+	expected.ThinkingLevel = "medium"
+	if inherited.Revision != 1 || inherited.Config != expected {
+		t.Fatalf("new writing conversation did not use its model default: %#v", inherited)
 	}
 
 	firstAfter, ok := first.RuntimeConfig()
@@ -234,7 +236,7 @@ func TestConversationConfigPreviewDoesNotPersistDraftSession(t *testing.T) {
 	}
 }
 
-func TestInteractiveConversationConfigPreviewUsesRecentGameSelectionWithoutCreatingStory(t *testing.T) {
+func TestInteractiveConversationConfigPreviewUsesModelDefaultWithoutCreatingStory(t *testing.T) {
 	application := newExecutionProfileTestApp(t)
 	application.mu.RLock()
 	projectID := application.cfg.ProjectID
@@ -244,6 +246,12 @@ func TestInteractiveConversationConfigPreviewUsesRecentGameSelectionWithoutCreat
 		Title: "Configured opening", StoryTellerID: "classic", ProfileID: "default", ThinkingLevel: "high",
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	thinking := "medium"
+	if _, err := application.PatchConversationConfig(context.Background(), ConversationConfigBinding{
+		Mode: ConversationModeInteractive, ProjectID: projectID,
+	}, ConversationConfigPatch{ThinkingLevel: &thinking}, 0); err != nil {
 		t.Fatal(err)
 	}
 	before, err := application.InteractiveStories()
@@ -257,7 +265,7 @@ func TestInteractiveConversationConfigPreviewUsesRecentGameSelectionWithoutCreat
 	if err != nil {
 		t.Fatal(err)
 	}
-	if preview.Revision != 0 || preview.ProfileID != "default" || preview.ThinkingLevel != "high" {
+	if preview.Revision != 0 || preview.ProfileID != "default" || preview.ThinkingLevel != thinking {
 		t.Fatalf("new story runtime preview = %#v", preview)
 	}
 	after, err := application.InteractiveStories()

@@ -97,6 +97,9 @@ type App struct {
 	servicesOnce       sync.Once
 
 	mu sync.RWMutex
+	// Keep concurrent manual selections ordered across their conversation and
+	// user-default writes, including selections made in different Projects.
+	modelSelectionMu sync.Mutex
 }
 
 // New creates the application runtime. When neither an explicit nor resumable

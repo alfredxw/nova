@@ -56,7 +56,7 @@ const storyPicker = {
   'storyPicker.setup.advanced.imagesOff': 'Manual images',
   'storyPicker.setup.model.profile': 'Model configuration',
   'storyPicker.setup.model.thinking': 'Thinking level',
-  'storyPicker.setup.model.description': 'This model generates the first scene and remains active for later turns.',
+  'storyPicker.setup.model.description': 'Used for this story. Model and thinking choices are also remembered for new stories.',
   'storyPicker.setup.model.loading': 'Loading the most recent Game configuration…',
   'storyPicker.setup.model.loadFailed': 'Could not load the opening model configuration. Try again.',
   'storyPicker.setup.model.catalogFailed': 'Could not load model profiles. Retry, or start with the current configuration.',

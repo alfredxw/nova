@@ -9,7 +9,7 @@ import { Spinner } from '@/components/ui/spinner'
 import type { LoreItem } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { hasLoreProtagonistTag } from '@/features/lore/tags'
-import type { ConversationConfigController, ConversationConfigSnapshot } from '@/features/conversation-config/types'
+import type { ConversationConfigChanges, ConversationConfigController, ConversationConfigSnapshot } from '@/features/conversation-config/types'
 import { normalizeThinkingLevel } from '@/features/settings/thinking-levels'
 import { normalizeStoryCheckSettings } from '../check-settings'
 import { gamePlanningTemplateName } from '../game-planning'
@@ -68,7 +68,6 @@ export function NewStorySetupPanel({
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
   const initialProtagonistRef = useRef<StoryProtagonist>(initialProtagonist)
-  const runtimeSelectionInitializedRef = useRef(Boolean(conversationConfig.snapshot))
   const protagonistSelectionTouchedRef = useRef(false)
   const narrativeStyleSelectionLockedRef = useRef(Boolean(story))
   const planningTemplate = planningTemplates.find((item) => item.id === planningTemplateId) || planningTemplates[0]
@@ -95,8 +94,7 @@ export function NewStorySetupPanel({
 
   useEffect(() => {
     const snapshot = conversationConfig.snapshot
-    if (!snapshot || runtimeSelectionInitializedRef.current) return
-    runtimeSelectionInitializedRef.current = true
+    if (!snapshot) return
     setSettings((current) => ({
       ...current,
       modelProfileId: snapshot.profile_id || 'default',
@@ -113,6 +111,23 @@ export function NewStorySetupPanel({
   const changeProtagonist = (next: StoryProtagonist) => {
     protagonistSelectionTouchedRef.current = true
     setProtagonist(next)
+  }
+
+  const changeSettings = async (next: StorySetupSettings) => {
+    const changes: ConversationConfigChanges = {}
+    if (next.modelProfileId !== settings.modelProfileId) changes.profile_id = next.modelProfileId
+    if (next.thinkingLevel !== settings.thinkingLevel) changes.thinking_level = next.thinkingLevel
+    if (Object.keys(changes).length > 0) {
+      setError('')
+      if (!await conversationConfig.patch(changes)) {
+        setError(t('storyPicker.setup.model.saveFailed'))
+        return
+      }
+      // Other opening controls may change while persistence is in progress.
+      setSettings((current) => ({ ...current, modelProfileId: next.modelProfileId, thinkingLevel: next.thinkingLevel }))
+      return
+    }
+    setSettings(next)
   }
 
   const submit = async () => {
@@ -213,8 +228,8 @@ export function NewStorySetupPanel({
                   tellers={tellers}
                   imagePresets={imagePresets}
                   value={settings}
-                  onChange={setSettings}
-                  runtimeConfigLoading={runtimeConfigLoading}
+                  onChange={(next) => { void changeSettings(next) }}
+                  runtimeConfigLoading={runtimeConfigLoading || conversationConfig.saving}
                   runtimeConfigError={conversationConfig.error}
                   onRuntimeConfigReload={() => void conversationConfig.reload()}
                   onNarrativeStyleChange={(id) => {

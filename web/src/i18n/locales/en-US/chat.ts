@@ -141,6 +141,7 @@ const chat = {
   'chat.modelProfile.switch': 'Switch model, current: {{model}}',
   'chat.modelProfile.loading': 'Loading model…',
   'chat.modelProfile.defaultModel': 'Default model',
+  'chat.modelProfile.rememberSelection': 'Model and thinking choices are remembered for new conversations of this type.',
   'chat.modelProfile.defaultProfile': 'Default: {{label}}',
   'chat.modelProfile.profile': '{{label}} ({{id}})',
   'chat.modelProfile.modelSection': 'Model',

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Check, ChevronDown, Loader2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -64,6 +65,11 @@ export function ModelProfileSwitcher({ agentKey, workspace, conversationConfig, 
         aria-label={selector.t('chat.modelProfile.action')}
         className="w-60 border-[var(--nova-border)] bg-[var(--nova-surface-2)] p-1.5 text-[var(--nova-text)]"
       >
+        {agentKey === 'ide' || agentKey === 'interactive_story' ? (
+          <div className="px-1.5 py-1 text-[11px] leading-4 text-[var(--nova-text-faint)]">
+            {selector.t('chat.modelProfile.rememberSelection')}
+          </div>
+        ) : null}
         {runActive ? (
           <>
             <div role="note" className="px-1.5 py-1 text-[11px] leading-4 text-[var(--nova-text-faint)]">
@@ -154,21 +160,22 @@ function useModelProfileSelector({ agentKey, conversationConfig, disabled = fals
     if (!conversationConfig || disabled || conversationConfig.saving) return
     setSavingSelection(selection)
     try {
-      await conversationConfig.patch(selection.kind === 'profile'
+      const saved = await conversationConfig.patch(selection.kind === 'profile'
         ? { profile_id: selection.value }
         : { thinking_level: selection.value as ThinkingLevel })
+      if (!saved) toast.error(t('chat.modelProfile.saveFailed'))
     } finally {
       setSavingSelection(null)
     }
   }
 
   const selectProfile = async (profileID: string) => {
-    if (!conversationConfig || profileID === currentProfile) return
+    if (!conversationConfig) return
     await saveConversationSelection({ kind: 'profile', value: profileID })
   }
 
   const selectThinkingLevel = async (level: ThinkingLevel) => {
-    if (!conversationConfig || level === currentThinkingLevel) return
+    if (!conversationConfig) return
     await saveConversationSelection({ kind: 'thinking', value: level })
   }
 

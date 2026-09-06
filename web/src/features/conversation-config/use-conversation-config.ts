@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { APIError } from '@/lib/api-client'
+import { queryClient } from '@/lib/query-client'
+import { GLOBAL_SETTINGS_TARGET, settingsQueryKeys, subscribeSettingsTarget } from '@/features/settings/query'
 import { fetchConversationConfig, patchConversationConfig } from './api'
 import type {
   ConversationConfigBinding,
@@ -29,7 +31,8 @@ interface BoundError {
 
 /**
  * Owns one conversation's compare-and-swap configuration snapshot.
- * Settings remain the bootstrap default; this controller never writes Settings.
+ * The backend also remembers explicit Writing/Game model choices in Settings.
+ * Existing conversations keep their own snapshots; uncommitted drafts refresh.
  */
 export function useConversationConfig(binding?: ConversationConfigBinding): ConversationConfigController {
   const normalizedBinding = useMemo(
@@ -105,6 +108,11 @@ export function useConversationConfig(binding?: ConversationConfigBinding): Conv
     return () => window.removeEventListener(CONVERSATION_CONFIG_UPDATED_EVENT, synchronize)
   }, [bindingKey, source])
 
+  useEffect(() => {
+    if (snapshot?.revision !== 0) return
+    return subscribeSettingsTarget(GLOBAL_SETTINGS_TARGET, () => { void reload() })
+  }, [reload, snapshot?.revision])
+
   const patch = useCallback(async (changes: ConversationConfigChanges) => {
     if (!normalizedBinding || savingRef.current || !hasChanges(changes)) return false
     let base = snapshot
@@ -131,11 +139,24 @@ export function useConversationConfig(binding?: ConversationConfigBinding): Conv
     } catch (reason) {
       const message = errorMessage(reason)
       console.warn('[conversation-config] save failed', { binding: normalizedBinding, changes, reason })
+      // The conversation can be durable even if remembering the new default
+      // failed. Show its actual selection while retaining the save error.
+      try {
+        const current = await fetchConversationConfig(normalizedBinding)
+        setBoundSnapshot({ bindingKey, snapshot: current })
+      } catch (reloadError) {
+        console.warn('[conversation-config] reload after save failure failed', { binding: normalizedBinding, reloadError })
+      }
       setBoundError({ bindingKey, message })
       return false
     } finally {
       savingRef.current = false
       setSaving(false)
+      if ((changes.profile_id !== undefined || changes.thinking_level !== undefined)
+        && (base.agent_kind === 'ide' || base.agent_kind === 'interactive_story')) {
+        void queryClient.invalidateQueries({ queryKey: settingsQueryKeys.all, refetchType: 'all' })
+          .catch((reason) => console.warn('[conversation-config] refresh remembered model settings failed', { reason }))
+      }
     }
   }, [bindingKey, normalizedBinding, reload, snapshot, source])
 

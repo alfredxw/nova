@@ -37,7 +37,8 @@ func IsReservedSessionID(id string) bool {
 var ErrSessionStoreUnavailable = errors.New("conversation session store is unavailable")
 
 // RecentSessionSeed resolves the newest valid per-Agent selection or falls
-// back to the current Settings default.
+// back to the current Settings default. Writing model preferences always come
+// from Settings; other fields retain their existing per-Project inheritance.
 func RecentSessionSeed(store *session.Store, runtime *config.Config, agentKind, excludeID string) (conversationconfig.Config, error) {
 	if store != nil {
 		recent, ok, err := store.RecentRuntimeConfig(agentKind, excludeID)
@@ -45,6 +46,13 @@ func RecentSessionSeed(store *session.Store, runtime *config.Config, agentKind, 
 			return conversationconfig.Config{}, err
 		}
 		if ok {
+			if agentKind == config.AgentKindIDE {
+				// Model preferences belong to the user. Activity in an older
+				// Project conversation must not replace the latest manual choice.
+				defaults := conversationconfig.Default(runtime, agentKind)
+				recent.ProfileID = defaults.ProfileID
+				recent.ThinkingLevel = defaults.ThinkingLevel
+			}
 			if err := conversationconfig.Validate(runtime, recent, agentKind); err == nil {
 				return recent, nil
 			} else {
