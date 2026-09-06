@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	agent "github.com/alfredxw/denova/agent"
-	"github.com/invopop/jsonschema"
 
 	"denova/internal/interactive"
 )
@@ -182,58 +181,7 @@ type submitInteractiveTurnToolSchema struct {
 	PlanUpdate   *interactive.TurnPlanUpdateInput   `json:"plan_update,omitempty" jsonschema_description:"Only when Game Agent planning is enabled. Initialize or restructure with replace_document; routinely update existing unique H2 bodies with replace_sections. Omit while the current plan remains useful."`
 }
 
-type submitInteractiveTurnReplaceDocumentPlanSchema struct {
-	Mode     string `json:"mode" jsonschema:"required,enum=replace_document" jsonschema_description:"Always replace_document."`
-	Markdown string `json:"markdown" jsonschema:"required" jsonschema_description:"Complete non-empty branch-plan Markdown following the injected planning template. This replaces the entire current document."`
-}
-
-type submitInteractiveTurnReplaceSectionsPlanSchema struct {
-	Mode     string                              `json:"mode" jsonschema:"required,enum=replace_sections" jsonschema_description:"Always replace_sections."`
-	Sections []interactive.TurnPlanSectionUpdate `json:"sections" jsonschema:"required,minItems=1" jsonschema_description:"Only changed existing H2 section bodies. Each item is accepted or rejected independently; retry only failed headings."`
-}
-
 const recommendedTurnStateChangesPerSubmission = 24
-
-// The provider receives these five disjoint variants as state_changes.items
-// oneOf. Runtime decoding remains centralized in interactive.TurnStateChangeInput,
-// while the model cannot infer that create accepts replace-only fields.
-type submitInteractiveTurnReplaceChangeSchema struct {
-	Op      string   `json:"op" jsonschema:"required,enum=replace" jsonschema_description:"Always replace."`
-	ActorID string   `json:"actor_id" jsonschema:"required" jsonschema_description:"Stable Actor ID from the Actor State Handbook."`
-	FieldID string   `json:"field_id" jsonschema:"required" jsonschema_description:"Exact Field ID in the target Actor template."`
-	Subpath []string `json:"subpath,omitempty" jsonschema:"maxItems=16" jsonschema_description:"Use only for nested updates to an object field; provide one string segment per level."`
-	Value   any      `json:"value" jsonschema:"required" jsonschema_description:"Complete non-empty field value at the end of this turn; its type must match the schema."`
-}
-
-type submitInteractiveTurnDeltaChangeSchema struct {
-	Op      string   `json:"op" jsonschema:"required,enum=delta" jsonschema_description:"Always delta."`
-	ActorID string   `json:"actor_id" jsonschema:"required" jsonschema_description:"Stable Actor ID from the Actor State Handbook."`
-	FieldID string   `json:"field_id" jsonschema:"required" jsonschema_description:"Exact numeric Field ID in the target Actor template."`
-	Subpath []string `json:"subpath,omitempty" jsonschema:"maxItems=16" jsonschema_description:"Use only for an existing nested number inside an object; provide one string segment per level."`
-	Value   float64  `json:"value" jsonschema:"required" jsonschema_description:"Finite amount to add to or subtract from an existing number."`
-}
-
-type submitInteractiveTurnCreateChangeSchema struct {
-	Op           string         `json:"op" jsonschema:"required,enum=create" jsonschema_description:"Always create."`
-	ActorID      string         `json:"actor_id" jsonschema:"required" jsonschema_description:"Use the character name directly in the story language; it must exactly equal name."`
-	TemplateID   string         `json:"template_id" jsonschema:"required" jsonschema_description:"Exact Template ID available for the new Actor."`
-	Name         string         `json:"name" jsonschema:"required" jsonschema_description:"Character name in the story language; it must exactly equal actor_id."`
-	Role         string         `json:"role,omitempty" jsonschema_description:"The new Actor's role in the current story."`
-	Description  string         `json:"description,omitempty" jsonschema_description:"Brief description of the new Actor."`
-	InitialState map[string]any `json:"initial_state,omitempty" jsonschema:"maxProperties=64" jsonschema_description:"Every reliable initial field value; each key must be an exact Field ID from the selected template."`
-}
-
-type submitInteractiveTurnArchiveChangeSchema struct {
-	Op      string `json:"op" jsonschema:"required,enum=archive" jsonschema_description:"Always archive."`
-	ActorID string `json:"actor_id" jsonschema:"required" jsonschema_description:"Existing Actor ID to remove from runtime state while preserving complete historical state."`
-	Reason  string `json:"reason" jsonschema:"required" jsonschema_description:"Non-empty reason established by prose that confirms death or permanent departure."`
-}
-
-type submitInteractiveTurnRestoreChangeSchema struct {
-	Op      string `json:"op" jsonschema:"required,enum=restore" jsonschema_description:"Always restore."`
-	ActorID string `json:"actor_id" jsonschema:"required" jsonschema_description:"Archived Actor ID to return to active runtime state."`
-	Reason  string `json:"reason" jsonschema:"required" jsonschema_description:"Non-empty reason established by prose that confirms the Actor's return."`
-}
 
 type submitInteractiveTurnTool struct {
 	info              *agent.ToolInfo
@@ -266,58 +214,8 @@ func newSubmitInteractiveTurnTool(
 		strings.TrimSpace(stateChanges.Description),
 		recommendedTurnStateChangesPerSubmission,
 	)
-	replaceVariant, err := turnToolParameterSchema[submitInteractiveTurnReplaceChangeSchema]()
-	if err != nil {
-		return nil, err
-	}
-	deltaVariant, err := turnToolParameterSchema[submitInteractiveTurnDeltaChangeSchema]()
-	if err != nil {
-		return nil, err
-	}
-	createVariant, err := turnToolParameterSchema[submitInteractiveTurnCreateChangeSchema]()
-	if err != nil {
-		return nil, err
-	}
-	archiveVariant, err := turnToolParameterSchema[submitInteractiveTurnArchiveChangeSchema]()
-	if err != nil {
-		return nil, err
-	}
-	restoreVariant, err := turnToolParameterSchema[submitInteractiveTurnRestoreChangeSchema]()
-	if err != nil {
-		return nil, err
-	}
-	stateChanges.Items = &jsonschema.Schema{
-		OneOf:       []*jsonschema.Schema{replaceVariant, deltaVariant, createVariant, archiveVariant, restoreVariant},
-		Description: "Choose exactly one of replace, delta, create, archive, or restore. Never mix fields from different operations.",
-	}
-	planUpdate, ok := parameters.Properties.Get("plan_update")
-	if !ok || planUpdate == nil {
-		return nil, fmt.Errorf("submit_interactive_turn schema missing plan_update")
-	}
-	replaceDocumentPlan, err := turnToolParameterSchema[submitInteractiveTurnReplaceDocumentPlanSchema]()
-	if err != nil {
-		return nil, err
-	}
-	replaceSectionsPlan, err := turnToolParameterSchema[submitInteractiveTurnReplaceSectionsPlanSchema]()
-	if err != nil {
-		return nil, err
-	}
-	planUpdate.OneOf = []*jsonschema.Schema{replaceDocumentPlan, replaceSectionsPlan}
-	planUpdate.Description = "Choose replace_document to initialize or restructure the plan, or replace_sections to update only existing unique H2 bodies. Omit plan_update when no planning change is needed."
 	info.ParamsOneOf = agent.NewParamsOneOfByJSONSchema(parameters)
 	return &submitInteractiveTurnTool{info: info, submit: submit, requestCompletion: requestCompletion}, nil
-}
-
-func turnToolParameterSchema[T any]() (*jsonschema.Schema, error) {
-	params, err := agent.GoStruct2ParamsOneOf[T]()
-	if err != nil {
-		return nil, fmt.Errorf("build submit_interactive_turn variant schema: %w", err)
-	}
-	result, err := params.ToJSONSchema()
-	if err != nil {
-		return nil, fmt.Errorf("convert submit_interactive_turn variant schema: %w", err)
-	}
-	return result, nil
 }
 
 func (t *submitInteractiveTurnTool) Info(context.Context) (*agent.ToolInfo, error) {

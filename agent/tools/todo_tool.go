@@ -68,37 +68,43 @@ type TodoApplyResult struct {
 }
 
 type todoToolInput struct {
-	Action           string         `json:"action" jsonschema:"enum=read,enum=update,enum=replace,enum=clear"`
-	ExpectedRevision uint64         `json:"expected_revision,omitempty"`
-	Mutations        []TodoMutation `json:"mutations,omitempty" jsonschema:"maxItems=256"`
-	Items            []TodoItem     `json:"items,omitempty" jsonschema:"maxItems=256"`
-}
-
-type todoReadInput struct {
-	Action string `json:"action" jsonschema:"required,enum=read" jsonschema_description:"Read the current plan and revision."`
-}
-
-type todoUpdateInput struct {
-	Action           string         `json:"action" jsonschema:"required,enum=update" jsonschema_description:"Partially update the current plan."`
-	ExpectedRevision uint64         `json:"expected_revision" jsonschema:"required" jsonschema_description:"Revision returned by the latest read or mutation."`
-	Mutations        []TodoMutation `json:"mutations" jsonschema:"required,minItems=1,maxItems=256" jsonschema_description:"Independent item mutations; every item returns its own outcome."`
+	Action           string           `json:"action" jsonschema:"enum=read,enum=update,enum=replace,enum=clear" jsonschema_description:"Read the current plan, update selected items, replace the plan, or clear it."`
+	ExpectedRevision *uint64          `json:"expected_revision,omitempty" jsonschema_description:"Required for update, replace, and clear. Copy the revision from the latest read or mutation; zero is a valid explicit revision."`
+	Mutations        []TodoMutation   `json:"mutations,omitempty" jsonschema:"maxItems=256" jsonschema_description:"Required and non-empty for update only. Every item returns its own outcome."`
+	Items            []todoItemSchema `json:"items,omitempty" jsonschema:"maxItems=256" jsonschema_description:"Required for replace only. An explicit empty array clears the plan; omission does not."`
 }
 
 type todoItemSchema struct {
-	ID     string     `json:"id" jsonschema:"required,minLength=1,maxLength=256" jsonschema_description:"Stable task ID."`
-	Text   string     `json:"text" jsonschema:"required,minLength=1,maxLength=65536" jsonschema_description:"Complete task text."`
-	Status TodoStatus `json:"status" jsonschema:"required,enum=pending,enum=in_progress,enum=completed" jsonschema_description:"Task status; at most one item may be in_progress."`
+	ID     string     `json:"id" jsonschema:"minLength=1,maxLength=256" jsonschema_description:"Stable task ID."`
+	Text   string     `json:"text" jsonschema:"minLength=1,maxLength=65536" jsonschema_description:"Complete task text."`
+	Status TodoStatus `json:"status" jsonschema:"enum=pending,enum=in_progress,enum=completed" jsonschema_description:"Task status; at most one item may be in_progress."`
 }
 
-type todoReplaceInput struct {
-	Action           string           `json:"action" jsonschema:"required,enum=replace" jsonschema_description:"Replace the complete plan."`
-	ExpectedRevision uint64           `json:"expected_revision" jsonschema:"required" jsonschema_description:"Revision returned by the latest read or mutation."`
-	Items            []todoItemSchema `json:"items" jsonschema:"required,maxItems=256" jsonschema_description:"Complete replacement plan; an empty array clears it."`
-}
-
-type todoClearInput struct {
-	Action           string `json:"action" jsonschema:"required,enum=clear" jsonschema_description:"Clear the complete plan."`
-	ExpectedRevision uint64 `json:"expected_revision" jsonschema:"required" jsonschema_description:"Revision returned by the latest read or mutation."`
+func (input todoToolInput) validate() error {
+	if input.Action != "read" && input.ExpectedRevision == nil {
+		return errors.New("todo " + input.Action + " requires expected_revision from the latest read or mutation")
+	}
+	switch input.Action {
+	case "read":
+		if input.ExpectedRevision != nil || input.Mutations != nil || input.Items != nil {
+			return errors.New("todo read accepts action only")
+		}
+	case "update":
+		if len(input.Mutations) == 0 || input.Items != nil {
+			return errors.New("todo update requires non-empty mutations and does not accept items")
+		}
+	case "replace":
+		if input.Items == nil || input.Mutations != nil {
+			return errors.New("todo replace requires items (use [] to clear) and does not accept mutations")
+		}
+	case "clear":
+		if input.Items != nil || input.Mutations != nil {
+			return errors.New("todo clear does not accept items or mutations")
+		}
+	default:
+		return errors.New("todo action must be read, update, replace, or clear")
+	}
+	return nil
 }
 
 // Todo exposes revisioned read/update semantics. With no Store it uses the
@@ -127,6 +133,9 @@ func buildTodo(stores ...TodoStore) (agent.Toolset, error) {
 		}
 	}
 	invoke := func(ctx context.Context, input todoToolInput) (agent.ToolResult, error) {
+		if err := input.validate(); err != nil {
+			return agent.ToolResult{}, err
+		}
 		var result TodoApplyResult
 		var err error
 		switch input.Action {
@@ -137,14 +146,13 @@ func buildTodo(stores ...TodoStore) (agent.Toolset, error) {
 				result.Items, result.Revision, err = store.Load(ctx)
 			}
 		case "update", "replace", "clear":
-			if len(input.Mutations) == 0 {
-				if input.Action == "update" {
-					return agent.ToolResult{}, errors.New("todo update requires at least one mutation")
-				}
+			items := make([]TodoItem, len(input.Items))
+			for index, item := range input.Items {
+				items[index] = TodoItem{ID: item.ID, Text: item.Text, Status: item.Status}
 			}
 			request := TodoApplyRequest{
-				ExpectedRevision: input.ExpectedRevision, Mode: TodoApplyMode(input.Action),
-				Mutations: input.Mutations, Items: input.Items,
+				ExpectedRevision: *input.ExpectedRevision, Mode: TodoApplyMode(input.Action),
+				Mutations: input.Mutations, Items: items,
 			}
 			if store == nil {
 				result, err = applySessionTodo(ctx, request)
@@ -160,9 +168,8 @@ func buildTodo(stores ...TodoStore) (agent.Toolset, error) {
 		result.Schema = TodoSchema
 		return JSONResult(result)
 	}
-	tool, err := newUnionTool(
+	tool, err := agent.InferTool(
 		"todo", "Read or revise the durable task plan. Mutations use optimistic revisions; updates return one outcome per item, and at most one item may be in_progress.", invoke,
-		toolSchemaFor[todoReadInput](), toolSchemaFor[todoUpdateInput](), toolSchemaFor[todoReplaceInput](), toolSchemaFor[todoClearInput](),
 	)
 	if err != nil {
 		return nil, err

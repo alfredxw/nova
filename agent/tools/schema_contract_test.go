@@ -37,61 +37,24 @@ func (schemaSkillLoader) Identity() agent.CapabilityIdentity {
 }
 func (schemaSkillLoader) Load(context.Context, string) (string, error) { return "instructions", nil }
 
-func TestActionToolsExposeDisjointOperationSchemas(t *testing.T) {
-	tests := []struct {
+// Local inference servers may enumerate only properties when building tool-call
+// grammars. Operation arguments must be visible without following a root union.
+func TestActionToolsExposeParametersDirectly(t *testing.T) {
+	for _, test := range []struct {
 		name       string
-		toolName   string
 		build      func() agent.Toolset
-		actions    []string
-		properties map[string][]string
+		properties []string
 	}{
-		{
-			name: "task", toolName: "task", build: func() agent.Toolset { return Tasks(schemaTaskExecutor{}) },
-			actions: []string{"start", "observe", "steer", "abort"},
-			properties: map[string][]string{
-				"start": {"action", "starts"}, "observe": {"action", "targets"},
-				"steer": {"action", "input", "refs"},
-				"abort": {"action", "reason", "refs"},
-			},
-		},
-		{
-			name: "todo", build: func() agent.Toolset { return Todo() },
-			actions: []string{"read", "update", "replace", "clear"},
-			properties: map[string][]string{
-				"read": {"action"}, "update": {"action", "expected_revision", "mutations"},
-				"replace": {"action", "expected_revision", "items"}, "clear": {"action", "expected_revision"},
-			},
-		},
-	}
-
-	for _, test := range tests {
+		{"task", func() agent.Toolset { return Tasks(schemaTaskExecutor{}) }, []string{"action", "input", "reason", "refs", "starts", "targets"}},
+		{"todo", func() agent.Toolset { return Todo() }, []string{"action", "expected_revision", "items", "mutations"}},
+	} {
 		t.Run(test.name, func(t *testing.T) {
-			schema := preparedNamedToolSchema(t, test.build, test.toolName)
-			if schema.Type != "object" {
-				t.Fatalf("root schema type = %q, want object", schema.Type)
+			schema := preparedNamedToolSchema(t, test.build, test.name)
+			if schema.Type != "object" || len(schema.OneOf) != 0 || len(schema.AnyOf) != 0 || !reflect.DeepEqual(schemaPropertyNames(schema), test.properties) {
+				t.Fatalf("parameters are hidden from a properties-only tool parser: %#v", schema)
 			}
-			if len(schema.OneOf) != len(test.actions) {
-				t.Fatalf("oneOf variants = %d, want %d", len(schema.OneOf), len(test.actions))
-			}
-			for index, variant := range schema.OneOf {
-				action := test.actions[index]
-				actionSchema, ok := variant.Properties.Get("action")
-				if !ok || len(actionSchema.Enum) != 1 || actionSchema.Enum[0] != action {
-					t.Fatalf("variant %d action = %#v", index, actionSchema)
-				}
-				if !containsString(variant.Required, "action") {
-					t.Fatalf("variant %s does not require action: %#v", action, variant.Required)
-				}
-				got := schemaPropertyNames(variant)
-				want := append([]string(nil), test.properties[action]...)
-				sort.Strings(want)
-				if !reflect.DeepEqual(got, want) {
-					t.Fatalf("variant %s properties = %#v, want %#v", action, got, want)
-				}
-				encoded, err := json.Marshal(variant)
-				if err != nil || !strings.Contains(string(encoded), `"additionalProperties":false`) {
-					t.Fatalf("variant %s is not closed: %s, %v", action, encoded, err)
-				}
+			if !reflect.DeepEqual(schema.Required, []string{"action"}) {
+				t.Fatalf("unconditional required parameters = %#v", schema.Required)
 			}
 		})
 	}
@@ -125,43 +88,31 @@ func TestSkillToolLoadsOneExactName(t *testing.T) {
 	}
 }
 
-func TestAskSchemaSeparatesFreeTextAndChoiceQuestions(t *testing.T) {
+func TestAskSchemaUsesOneQuestionShape(t *testing.T) {
 	schema := preparedToolSchema(t, Ask)
 	questions, ok := schema.Properties.Get("questions")
-	if !ok || questions.Items == nil || len(questions.Items.OneOf) != 2 {
-		t.Fatalf("ask question variants = %#v", questions)
+	if !ok || questions.Items == nil || len(questions.Items.OneOf) != 0 || len(questions.Items.AnyOf) != 0 {
+		t.Fatalf("ask questions must directly expose their fields: %#v", questions)
 	}
-	freeText := questions.Items.OneOf[0]
-	choice := questions.Items.OneOf[1]
-	if got := schemaPropertyNames(freeText); !reflect.DeepEqual(got, []string{"allow_free_text", "id", "prompt"}) {
-		t.Fatalf("free-text properties = %#v", got)
+	if got := schemaPropertyNames(questions.Items); !reflect.DeepEqual(got, []string{"id", "multiple", "options", "prompt"}) {
+		t.Fatalf("question properties = %#v", got)
 	}
-	allow, _ := freeText.Properties.Get("allow_free_text")
-	if allow == nil || allow.Const != true {
-		t.Fatalf("allow_free_text schema = %#v", allow)
+	if !reflect.DeepEqual(questions.Items.Required, []string{"id", "prompt"}) {
+		t.Fatalf("required question fields = %#v", questions.Items.Required)
 	}
-	if got := schemaPropertyNames(choice); !reflect.DeepEqual(got, []string{"id", "multiple", "options", "prompt"}) {
-		t.Fatalf("choice properties = %#v", got)
+	options, _ := questions.Items.Properties.Get("options")
+	if options == nil || options.Contains != nil || options.MinContains != nil || options.MaxContains != nil {
+		t.Fatalf("recommendation cardinality belongs to interaction validation: %#v", options)
 	}
-	for name, variant := range map[string]*jsonschema.Schema{"free text": freeText, "choice": choice} {
-		prompt, _ := variant.Properties.Get("prompt")
-		if prompt == nil || prompt.Type != "string" || prompt.Properties.Len() != 0 {
-			t.Fatalf("%s prompt must be one language-specific string: %#v", name, prompt)
+	info := &agent.ToolInfo{Name: "ask", ParamsOneOf: agent.NewParamsOneOfByJSONSchema(schema)}
+	for _, arguments := range []string{
+		`{"questions":[{"id":"scope","prompt":"Which scope?"}]}`,
+		`{"questions":[{"id":"scope","prompt":"Which scope?","options":[]}]}`,
+		`{"questions":[{"id":"scope","prompt":"Which scope?","options":[{"value":"a","label":"A","recommended":true},{"value":"b","label":"B"}]}]}`,
+	} {
+		if _, err := agent.NormalizeToolArguments(info, arguments); err != nil {
+			t.Errorf("valid question shape rejected: %s: %v", arguments, err)
 		}
-	}
-	options, _ := choice.Properties.Get("options")
-	if options == nil || options.MinItems == nil || *options.MinItems != 2 || options.MaxItems == nil || *options.MaxItems != 4 ||
-		options.Contains == nil || options.MinContains == nil || *options.MinContains != 1 || options.MaxContains == nil || *options.MaxContains != 1 {
-		t.Fatalf("choice options schema = %#v", options)
-	}
-	recommended, _ := options.Contains.Properties.Get("recommended")
-	if recommended == nil || recommended.Const != true {
-		t.Fatalf("recommended marker schema = %#v", recommended)
-	}
-	label, _ := options.Items.Properties.Get("label")
-	description, _ := options.Items.Properties.Get("description")
-	if label == nil || label.Type != "string" || description == nil || description.Type != "string" {
-		t.Fatalf("Ask option copy must use single-language strings: label=%#v description=%#v", label, description)
 	}
 }
 

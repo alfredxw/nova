@@ -67,7 +67,7 @@ func TestReadRoutesLocalTextAndDirectoryWithAdapterSpecificArguments(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Name != "read" || len(parameters.AnyOf) != 2 {
+	if info.Name != "read" || len(parameters.AnyOf) != 0 || parameters.Properties.Len() != 6 {
 		t.Fatalf("read schema = %#v", info)
 	}
 

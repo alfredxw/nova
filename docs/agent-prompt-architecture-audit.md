@@ -1,5 +1,8 @@
 # Denova Agent Prompt 与 Tool Schema 写法审计
 
+> 2026-09-06 更新：本文关于工具输入使用 `oneOf` / `anyOf` 分支的建议及实施记录已被替代，保留作历史审计背景。当前内置工具直接展示对象字段，以枚举说明操作，以基础 Schema 检查类型，以宿主校验条件必填、互斥和状态一致性；`ask` 由宿主根据 `options` 推导自由输入模式，模型不再填写 `allow_free_text`。以工具实现及 `builtin_schema_protocol_test.go` 的实际协议请求检查为准。
+
+
 > 日期：2026-08-13
 > 状态：核心改造已实施；本文同时保留审计依据、对照样例和后续评测标准。
 > 对照基线：本地 `../claude-code`、`../codex`、用户提供的最新 Claude Code system prompt 与当前 Denova 工作区。

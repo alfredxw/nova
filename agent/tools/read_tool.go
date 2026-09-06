@@ -155,7 +155,6 @@ func newReadTool(adapters []ReadAdapter, maxResultBytes int) (*readTool, error) 
 		return nil, errors.New("read requires at least one adapter")
 	}
 	seen := make(map[string]struct{}, len(adapters))
-	variants := make([]*jsonschema.Schema, 0, len(adapters))
 	selected := make([]ReadAdapter, 0, len(adapters))
 	names := make([]string, 0, len(adapters))
 	for _, adapter := range adapters {
@@ -177,17 +176,17 @@ func newReadTool(adapters []ReadAdapter, maxResultBytes int) (*readTool, error) 
 			return nil, fmt.Errorf("read adapter %q has no parameter schema", name)
 		}
 		seen[name] = struct{}{}
-		variants = append(variants, parameters)
 		selected = append(selected, adapter)
 		names = append(names, name)
 	}
-	if err := validateReadAdapterParameters(selected); err != nil {
+	schema, err := readAdapterSchema(selected)
+	if err != nil {
 		return nil, err
 	}
 	sort.Strings(names)
 	return &readTool{
 		adapters:       selected,
-		schema:         &jsonschema.Schema{Type: "object", AnyOf: variants},
+		schema:         schema,
 		maxResultBytes: maxResultBytes,
 		desc: "Read one bounded resource using the parameters supported by its registered adapter. " +
 			"HTTP(S) URLs are not supported; use web_fetch. Available adapters: " + strings.Join(names, ", ") + ".",
@@ -488,36 +487,68 @@ func readResultEnvelope(result ReadResult) readEnvelope {
 	}
 }
 
-func validateReadAdapterParameters(adapters []ReadAdapter) error {
+// readAdapterSchema exposes one parameter object to providers. Only fields
+// required by every adapter are globally required; the selected adapter still
+// owns its full contract. Shared fields must have identical structural meaning.
+func readAdapterSchema(adapters []ReadAdapter) (*jsonschema.Schema, error) {
+	merged, err := reflectedToolSchema[struct{}]()
+	if err != nil {
+		return nil, err
+	}
 	type propertyContract struct {
-		adapter  string
-		schema   string
-		required bool
+		adapter      string
+		schema       string
+		parameter    *jsonschema.Schema
+		required     bool
+		count        int
+		descriptions []string
 	}
 	contracts := make(map[string]propertyContract)
 	for _, adapter := range adapters {
 		schema := adapter.Parameters()
-		if schema == nil || schema.Properties == nil {
-			continue
+		if schema == nil || schema.Type != "object" || schema.Properties == nil || len(schema.OneOf) != 0 || len(schema.AnyOf) != 0 || len(schema.AllOf) != 0 {
+			return nil, fmt.Errorf("read adapter %q must expose object properties directly", adapter.Name())
 		}
-		required := make(map[string]struct{}, len(schema.Required))
+		required := make(map[string]bool, len(schema.Required))
 		for _, name := range schema.Required {
-			required[name] = struct{}{}
+			required[name] = true
 		}
 		for pair := schema.Properties.Oldest(); pair != nil; pair = pair.Next() {
 			encoded, err := canonicalReadPropertySchema(pair.Value)
 			if err != nil {
-				return fmt.Errorf("canonicalize read adapter %q parameter %q: %w", adapter.Name(), pair.Key, err)
+				return nil, fmt.Errorf("canonicalize read adapter %q parameter %q: %w", adapter.Name(), pair.Key, err)
 			}
-			_, isRequired := required[pair.Key]
-			previous, exists := contracts[pair.Key]
-			if exists && (previous.schema != encoded || previous.required != isRequired) {
-				return fmt.Errorf("read parameter %q has conflicting contracts in adapters %q and %q", pair.Key, previous.adapter, adapter.Name())
+			contract, exists := contracts[pair.Key]
+			if exists && (contract.schema != encoded || contract.required != required[pair.Key]) {
+				return nil, fmt.Errorf("read parameter %q has conflicting contracts in adapters %q and %q", pair.Key, contract.adapter, adapter.Name())
 			}
-			contracts[pair.Key] = propertyContract{adapter: adapter.Name(), schema: encoded, required: isRequired}
+			if !exists {
+				contract = propertyContract{adapter: adapter.Name(), schema: encoded, parameter: pair.Value, required: required[pair.Key]}
+			}
+			contract.count++
+			if pair.Value != nil && pair.Value.Description != "" {
+				contract.descriptions = append(contract.descriptions, adapter.Name()+": "+pair.Value.Description)
+			}
+			contracts[pair.Key] = contract
 		}
 	}
-	return nil
+	names := make([]string, 0, len(contracts))
+	for name := range contracts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		contract := contracts[name]
+		if contract.parameter != nil {
+			sort.Strings(contract.descriptions)
+			contract.parameter.Description = strings.Join(contract.descriptions, "\n")
+		}
+		merged.Properties.Set(name, contract.parameter)
+		if contract.required && contract.count == len(adapters) {
+			merged.Required = append(merged.Required, name)
+		}
+	}
+	return merged, nil
 }
 
 func canonicalReadPropertySchema(schema *jsonschema.Schema) (string, error) {

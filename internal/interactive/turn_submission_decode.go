@@ -17,17 +17,17 @@ const turnSubmissionStateChangesField = "state_changes"
 // are separate fields so the model never has to construct or escape a JSON
 // Pointer; the backend compiles this shape to the persisted interactivestate.Update.
 type TurnStateChangeInput struct {
-	Op           string         `json:"op" jsonschema:"enum=replace,enum=delta,enum=create,enum=archive,enum=restore" jsonschema_description:"replace writes a field's complete new value; delta changes an existing number; create adds an Actor; archive removes an Actor from runtime participation; restore resumes participation."`
+	Op           string         `json:"op" jsonschema:"enum=replace,enum=delta,enum=create,enum=archive,enum=restore" jsonschema_description:"replace writes a field's complete new value; delta changes an existing number; create adds an Actor; archive removes an Actor from runtime participation while preserving complete historical state; restore returns an archived Actor to active runtime participation."`
 	ActorID      string         `json:"actor_id" jsonschema_description:"For an existing Actor, copy the ID from the state handbook exactly. For create, use the character name in the story's language and make it identical to name."`
-	FieldID      string         `json:"field_id,omitempty" jsonschema_description:"Required for replace/delta. Copy the Field ID from the Actor State Handbook exactly."`
-	Subpath      []string       `json:"subpath,omitempty" jsonschema_description:"Use only for nested updates inside object fields. Supply one string segment per level; do not construct a path string."`
-	Value        any            `json:"value,omitempty" jsonschema_description:"The complete replacement value or numeric delta. It must match the field type; number, bool, object, and list fields require native JSON values, not quoted strings."`
+	FieldID      string         `json:"field_id,omitempty" jsonschema_description:"Required only for replace/delta. Copy an exact Field ID from the target Actor template in the Actor State Handbook. For delta, the field or selected subpath must be an existing number."`
+	Subpath      []string       `json:"subpath,omitempty" jsonschema:"maxItems=16" jsonschema_description:"Optional only for replace/delta nested updates inside object fields. For delta, target an existing nested number. Supply one string segment per level; do not construct a path string."`
+	Value        any            `json:"value,omitempty" jsonschema_description:"Required only for replace/delta. For replace, provide the complete non-empty field value at the end of this turn. For delta, provide a finite amount to add to or subtract from an existing number. Match the target field type; number, bool, object, and list fields require native JSON values, not quoted strings. Zero and false are valid values."`
 	TemplateID   string         `json:"template_id,omitempty" jsonschema_description:"Required only for create. Copy a Template ID from Templates Available to New Actors exactly."`
-	Name         string         `json:"name,omitempty" jsonschema_description:"Required for create. Use the character name in the story's language and make it identical to actor_id."`
-	Role         string         `json:"role,omitempty" jsonschema_description:"Optional role used only for create."`
+	Name         string         `json:"name,omitempty" jsonschema_description:"Required only for create. Use the character name in the story's language and make it identical to actor_id."`
+	Role         string         `json:"role,omitempty" jsonschema_description:"Optional new Actor's role in the current story, used only for create."`
 	Description  string         `json:"description,omitempty" jsonschema_description:"Brief Actor description used only for create."`
-	InitialState map[string]any `json:"initial_state,omitempty" jsonschema_description:"Used only for create. Keys must be exact Field IDs from the selected template; number, bool, object, and list fields require native JSON values, not quoted strings."`
-	Reason       string         `json:"reason,omitempty" jsonschema_description:"Required for archive/restore. Briefly state the factual basis for archiving or restoring the Actor."`
+	InitialState map[string]any `json:"initial_state,omitempty" jsonschema:"maxProperties=64" jsonschema_description:"Used only for create. Include every reliable initial field value; keys must be exact Field IDs from the selected template. Number, bool, object, and list fields require native JSON values, not quoted strings."`
+	Reason       string         `json:"reason,omitempty" jsonschema_description:"Non-empty reason required only for archive/restore. For archive, cite facts established by prose that confirm death or permanent departure. For restore, cite facts established by prose that confirm the archived Actor's return."`
 }
 
 // DecodeInteractiveTurnSubmissionInput independently decodes state_changes,
@@ -255,7 +255,7 @@ func decodeStructuredStateChangesModule(raw json.RawMessage) ([]interactivestate
 				fmt.Sprintf("/state_changes/%d", index),
 				"valid replace, delta, create, archive, or restore fields",
 				"invalid state change",
-				"The structured state change has incompatible or missing fields.",
+				err.Error(),
 			))
 			continue
 		}
@@ -310,37 +310,37 @@ func stateUpdateFromStructuredInput(change TurnStateChangeInput) (interactivesta
 	change.FieldID = strings.TrimSpace(change.FieldID)
 	change.TemplateID = strings.TrimSpace(change.TemplateID)
 	if change.ActorID == "" {
-		return interactivestate.Update{}, fmt.Errorf("state_changes 缺少 actor_id")
+		return interactivestate.Update{}, fmt.Errorf("state_changes requires actor_id")
 	}
 	switch change.Op {
 	case interactivestate.Replace, interactivestate.Delta:
 		if change.FieldID == "" {
-			return interactivestate.Update{}, fmt.Errorf("%s 状态变化缺少 field_id", change.Op)
+			return interactivestate.Update{}, fmt.Errorf("%s requires field_id", change.Op)
 		}
 		if change.Value == nil {
-			return interactivestate.Update{}, fmt.Errorf("%s 状态变化缺少非空 value", change.Op)
+			return interactivestate.Update{}, fmt.Errorf("%s requires a non-null value", change.Op)
 		}
 		if change.TemplateID != "" || change.Name != "" || change.Role != "" || change.Description != "" || change.InitialState != nil || strings.TrimSpace(change.Reason) != "" {
-			return interactivestate.Update{}, fmt.Errorf("%s 不能包含 create 或 lifecycle 专用字段", change.Op)
+			return interactivestate.Update{}, fmt.Errorf("%s does not accept template_id, name, role, description, initial_state, or reason", change.Op)
 		}
 		segments := []string{change.ActorID, change.FieldID}
 		for _, segment := range change.Subpath {
 			segment = strings.TrimSpace(segment)
 			if segment == "" {
-				return interactivestate.Update{}, fmt.Errorf("subpath 不能包含空段")
+				return interactivestate.Update{}, fmt.Errorf("subpath must not contain empty segments")
 			}
 			segments = append(segments, segment)
 		}
 		return interactivestate.Update{Op: change.Op, Path: interactivestate.FormatPath(segments), Value: change.Value}, nil
 	case interactivestate.Create:
 		if change.TemplateID == "" {
-			return interactivestate.Update{}, fmt.Errorf("create 状态变化缺少 template_id")
+			return interactivestate.Update{}, fmt.Errorf("create requires template_id")
 		}
 		if strings.TrimSpace(change.Name) == "" {
-			return interactivestate.Update{}, fmt.Errorf("create 状态变化缺少 name；新建 Actor 的 name 必须与 actor_id 完全相同")
+			return interactivestate.Update{}, fmt.Errorf("create requires name matching actor_id")
 		}
 		if change.FieldID != "" || len(change.Subpath) > 0 || change.Value != nil || strings.TrimSpace(change.Reason) != "" {
-			return interactivestate.Update{}, fmt.Errorf("create 不能包含 field_id、subpath、value 或 reason")
+			return interactivestate.Update{}, fmt.Errorf("create does not accept field_id, subpath, value, or reason")
 		}
 		value := map[string]any{"template_id": change.TemplateID}
 		if name := strings.TrimSpace(change.Name); name != "" {
@@ -359,17 +359,17 @@ func stateUpdateFromStructuredInput(change TurnStateChangeInput) (interactivesta
 	case interactivestate.Archive, interactivestate.Restore:
 		reason := strings.TrimSpace(change.Reason)
 		if reason == "" {
-			return interactivestate.Update{}, fmt.Errorf("%s 状态变化缺少非空 reason", change.Op)
+			return interactivestate.Update{}, fmt.Errorf("%s requires a non-empty reason", change.Op)
 		}
 		if len([]byte(reason)) > maxActorArchiveReasonBytes {
-			return interactivestate.Update{}, fmt.Errorf("%s reason 超过 %d bytes", change.Op, maxActorArchiveReasonBytes)
+			return interactivestate.Update{}, fmt.Errorf("%s reason exceeds %d bytes", change.Op, maxActorArchiveReasonBytes)
 		}
 		if change.FieldID != "" || len(change.Subpath) > 0 || change.Value != nil || change.TemplateID != "" || change.Name != "" || change.Role != "" || change.Description != "" || change.InitialState != nil {
-			return interactivestate.Update{}, fmt.Errorf("%s 只能包含 actor_id 和 reason", change.Op)
+			return interactivestate.Update{}, fmt.Errorf("%s accepts only op, actor_id, and reason", change.Op)
 		}
 		return interactivestate.Update{Op: change.Op, Path: interactivestate.FormatPath([]string{change.ActorID}), Value: map[string]any{"reason": reason}}, nil
 	default:
-		return interactivestate.Update{}, fmt.Errorf("op 必须是 replace、delta、create、archive 或 restore")
+		return interactivestate.Update{}, fmt.Errorf("op must be replace, delta, create, archive, or restore")
 	}
 }
 

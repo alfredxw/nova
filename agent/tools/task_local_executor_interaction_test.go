@@ -19,7 +19,7 @@ func TestTaskWaitRoutesChildInteractionThroughHost(t *testing.T) {
 		Model: &taskModel{responses: []*agent.Message{
 			agent.AssistantMessage("", []agent.ToolCall{{
 				ID: "ask-scope", Type: "function",
-				Function: agent.FunctionCall{Name: "ask", Arguments: `{"questions":[{"id":"scope","prompt":"What scope should be inspected?","allow_free_text":true}]}`},
+				Function: agent.FunctionCall{Name: "ask", Arguments: `{"questions":[{"id":"scope","prompt":"What scope should be inspected?"}]}`},
 			}}),
 			agent.AssistantMessage("interaction resumed", nil),
 		}},
@@ -146,7 +146,7 @@ func TestAttachedChildRejectsInteractionInsteadOfWaitingForUser(t *testing.T) {
 		Model: &taskModel{responses: []*agent.Message{
 			agent.AssistantMessage("", []agent.ToolCall{{
 				ID: "ask-user", Type: "function",
-				Function: agent.FunctionCall{Name: "ask", Arguments: `{"questions":[{"id":"scope","prompt":"Which scope?","allow_free_text":true}]}`},
+				Function: agent.FunctionCall{Name: "ask", Arguments: `{"questions":[{"id":"scope","prompt":"Which scope?"}]}`},
 			}}),
 			agent.AssistantMessage("returned blocker to parent", nil),
 		}},

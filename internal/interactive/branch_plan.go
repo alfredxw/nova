@@ -51,9 +51,9 @@ type UpdateBranchPlanResult struct {
 // replacement initializes or substantially restructures a plan; section
 // replacements are routine edits whose headings are bound to the current plan.
 type TurnPlanUpdateInput struct {
-	Mode     string                  `json:"mode" jsonschema_description:"Use replace_document to initialize or substantially restructure the plan. Use replace_sections for routine edits to existing unique H2 sections."`
-	Markdown string                  `json:"markdown,omitempty" jsonschema_description:"Complete non-empty branch-plan Markdown. Required only for replace_document."`
-	Sections []TurnPlanSectionUpdate `json:"sections,omitempty" jsonschema_description:"Existing H2 section bodies to replace independently. Required only for replace_sections."`
+	Mode     string                  `json:"mode" jsonschema:"enum=replace_document,enum=replace_sections" jsonschema_description:"Use replace_document to initialize or substantially restructure the plan. Use replace_sections for routine edits to existing unique H2 sections."`
+	Markdown string                  `json:"markdown,omitempty" jsonschema_description:"Required only for replace_document; omit for replace_sections. Complete non-empty branch-plan Markdown following the injected planning template; this replaces the entire current document."`
+	Sections []TurnPlanSectionUpdate `json:"sections,omitempty" jsonschema:"minItems=1" jsonschema_description:"Required only for replace_sections; omit for replace_document. Send only changed existing unique H2 section bodies. Each item is accepted or rejected independently; retry only failed headings listed in retry_sections."`
 }
 
 // TurnPlanSectionUpdate replaces only the body beneath one existing unique H2

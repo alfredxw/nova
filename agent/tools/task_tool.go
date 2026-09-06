@@ -94,33 +94,41 @@ type taskAgentCatalog interface {
 
 type taskToolInput struct {
 	Action  string              `json:"action" jsonschema:"enum=start,enum=observe,enum=steer,enum=abort"`
-	Starts  []TaskRequest       `json:"starts,omitempty" jsonschema:"maxItems=32"`
-	Targets []TaskObserveTarget `json:"targets,omitempty" jsonschema:"maxItems=32"`
-	Refs    []TaskRef           `json:"refs,omitempty" jsonschema:"maxItems=32"`
-	Input   string              `json:"input,omitempty" jsonschema:"maxLength=1048576"`
-	Reason  string              `json:"reason,omitempty" jsonschema:"maxLength=65536"`
+	Starts  []TaskRequest       `json:"starts,omitempty" jsonschema:"maxItems=32" jsonschema_description:"Required and non-empty for start only. Independent task requests with per-item outcomes."`
+	Targets []TaskObserveTarget `json:"targets,omitempty" jsonschema:"maxItems=32" jsonschema_description:"Required and non-empty for observe only. Tasks with their independent observation cursors."`
+	Refs    []TaskRef           `json:"refs,omitempty" jsonschema:"maxItems=32" jsonschema_description:"Required and non-empty for steer or abort. Every task returns its own outcome."`
+	Input   *string             `json:"input,omitempty" jsonschema:"minLength=1,maxLength=1048576" jsonschema_description:"Required for steer only. Additional instructions for the referenced tasks."`
+	Reason  *string             `json:"reason,omitempty" jsonschema:"minLength=1,maxLength=65536" jsonschema_description:"Required for abort only. Non-empty reason recorded with the abort request."`
 }
 
-type taskStartInput struct {
-	Action string        `json:"action" jsonschema:"required,enum=start" jsonschema_description:"Start delegated tasks."`
-	Starts []TaskRequest `json:"starts" jsonschema:"required,minItems=1,maxItems=32" jsonschema_description:"Independent task requests; every item returns its own outcome."`
-}
-
-type taskObserveInput struct {
-	Action  string              `json:"action" jsonschema:"required,enum=observe" jsonschema_description:"Read current task output and events without waiting."`
-	Targets []TaskObserveTarget `json:"targets" jsonschema:"required,minItems=1,maxItems=32" jsonschema_description:"Tasks and their independent cursors; every target returns its own outcome."`
-}
-
-type taskSteerInput struct {
-	Action string    `json:"action" jsonschema:"required,enum=steer" jsonschema_description:"Add instructions to running tasks."`
-	Refs   []TaskRef `json:"refs" jsonschema:"required,minItems=1,maxItems=32" jsonschema_description:"Tasks that receive the same steering input."`
-	Input  string    `json:"input" jsonschema:"required,minLength=1,maxLength=1048576" jsonschema_description:"Additional instruction for the referenced tasks."`
-}
-
-type taskAbortInput struct {
-	Action string    `json:"action" jsonschema:"required,enum=abort" jsonschema_description:"Abort running tasks."`
-	Refs   []TaskRef `json:"refs" jsonschema:"required,minItems=1,maxItems=32" jsonschema_description:"Tasks to abort; every reference returns its own outcome."`
-	Reason string    `json:"reason" jsonschema:"required,minLength=1,maxLength=65536" jsonschema_description:"Reason recorded with the abort request."`
+func (input taskToolInput) validate() error {
+	switch input.Action {
+	case "start":
+		if len(input.Starts) == 0 || input.Targets != nil || input.Refs != nil || input.Input != nil || input.Reason != nil {
+			return errors.New("task start requires non-empty starts and accepts no other action fields")
+		}
+	case "observe":
+		if len(input.Targets) == 0 || input.Starts != nil || input.Refs != nil || input.Input != nil || input.Reason != nil {
+			return errors.New("task observe requires non-empty targets and accepts no other action fields")
+		}
+	case "steer", "abort":
+		if len(input.Refs) == 0 || input.Starts != nil || input.Targets != nil {
+			return errors.New("task steer and abort require non-empty refs and do not accept starts or targets")
+		}
+		if input.Action == "steer" {
+			if input.Input == nil || input.Reason != nil {
+				return errors.New("task steer requires input and does not accept reason")
+			}
+			return validateTaskString("input", *input.Input, 1<<20)
+		}
+		if input.Reason == nil || input.Input != nil {
+			return errors.New("task abort requires reason and does not accept input")
+		}
+		return validateTaskString("reason", *input.Reason, 65536)
+	default:
+		return fmt.Errorf("unsupported task action %q", input.Action)
+	}
+	return nil
 }
 
 type taskItemResult struct {
@@ -155,12 +163,12 @@ func buildTasks(executor TaskExecutor) (agent.Toolset, error) {
 		}
 	}
 	invoke := func(ctx context.Context, input taskToolInput) (agent.ToolResult, error) {
+		if err := input.validate(); err != nil {
+			return agent.ToolResult{}, err
+		}
 		results := make([]taskItemResult, 0)
 		switch strings.TrimSpace(input.Action) {
 		case "start":
-			if len(input.Starts) == 0 {
-				return agent.ToolResult{}, errors.New("task start requires at least one request")
-			}
 			for index, request := range input.Starts {
 				item := taskItemResult{Index: index}
 				if itemErr := validateTaskRequest(request); itemErr != nil {
@@ -182,9 +190,6 @@ func buildTasks(executor TaskExecutor) (agent.Toolset, error) {
 				results = append(results, item)
 			}
 		case "observe":
-			if len(input.Targets) == 0 {
-				return agent.ToolResult{}, errors.New("task observe requires at least one target")
-			}
 			for index, target := range input.Targets {
 				item := taskItemResult{Index: index}
 				if itemErr := validateTaskObserveTarget(target); itemErr != nil {
@@ -201,9 +206,6 @@ func buildTasks(executor TaskExecutor) (agent.Toolset, error) {
 				results = append(results, item)
 			}
 		case "steer", "abort":
-			if len(input.Refs) == 0 {
-				return agent.ToolResult{}, fmt.Errorf("task %s requires at least one ref", input.Action)
-			}
 			for index, ref := range input.Refs {
 				item := taskItemResult{Index: index}
 				if itemErr := validateTaskRef(ref); itemErr != nil {
@@ -214,13 +216,13 @@ func buildTasks(executor TaskExecutor) (agent.Toolset, error) {
 				commandID := taskActionCommandID(ctx, input.Action, index)
 				switch input.Action {
 				case "steer":
-					steer := agent.Text(input.Input)
+					steer := agent.Text(*input.Input)
 					steer.IdempotencyKey = commandID
 					if itemErr := executor.Steer(ctx, ref, steer); itemErr != nil {
 						setTaskItemError(&item, itemErr)
 					}
 				case "abort":
-					if itemErr := executor.Abort(ctx, ref, agent.AbortRequest{Reason: input.Reason, IdempotencyKey: commandID}); itemErr != nil {
+					if itemErr := executor.Abort(ctx, ref, agent.AbortRequest{Reason: *input.Reason, IdempotencyKey: commandID}); itemErr != nil {
 						setTaskItemError(&item, itemErr)
 					}
 				}
@@ -233,10 +235,8 @@ func buildTasks(executor TaskExecutor) (agent.Toolset, error) {
 			Results []taskItemResult `json:"results"`
 		}{Results: results})
 	}
-	tool, err := newUnionTool(
+	tool, err := agent.InferTool(
 		"task", description, invoke,
-		toolSchemaFor[taskStartInput](), toolSchemaFor[taskObserveInput](), toolSchemaFor[taskSteerInput](),
-		toolSchemaFor[taskAbortInput](),
 	)
 	if err != nil {
 		return nil, err
