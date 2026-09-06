@@ -4,13 +4,37 @@ Denova 仅在此记录用户可感知的重大功能、重要不兼容或数据�
 
 Denova records only major user-visible features, important compatibility or data changes, security updates, and fixes affecting core workflows. Internal refactors, test changes, copy edits, and minor UI polish are omitted; see the [Git history](https://github.com/alfredxw/denova/commits/master) for full details.
 
-`Unreleased` 以最近一个已发布版本（当前为 v0.4.1）为比较基线，只描述升级用户最终可感知的净变化；内部接口、实现重构和 v0.4.1 后从未发布的中间格式不计入。
+`Unreleased` 以最近一个已发布版本（当前为 v0.4.2）为比较基线，只描述升级用户最终可感知的净变化；内部接口、实现重构和 v0.4.2 后从未发布的中间格式不计入。
 
-`Unreleased` compares against the latest release (currently v0.4.1) and describes only the final user-visible delta. Internal APIs, implementation refactors, and intermediate formats never released after v0.4.1 are excluded.
+`Unreleased` compares against the latest release (currently v0.4.2) and describes only the final user-visible delta. Internal APIs, implementation refactors, and intermediate formats never released after v0.4.2 are excluded.
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)。
 
 ## [Unreleased]
+
+## [v0.4.2] - 2026-09-06
+
+### Brief / 简要说明
+
+#### 中文
+
+- 改善本地推理服务的内置工具调用兼容性，保留完整参数说明和执行校验。
+- 记住手动选择的模型与思考强度，供后续同类对话和新故事使用。
+
+#### English
+
+- Improved built-in tool compatibility with local inference services while retaining full parameter guidance and execution validation.
+- Remembered manually selected models and thinking levels for subsequent conversations of the same kind and new stories.
+
+### Changed / 调整
+
+- 手动调整模型或思考强度后，后续同类对话和新故事会沿用该选择，减少重复配置。
+- Subsequent conversations of the same kind and new stories reuse manually selected models and thinking levels, reducing repeated setup.
+
+### Fixed / 修复
+
+- 简化内置工具的参数 Schema，改善本地推理服务的工具调用兼容性，同时保留参数校验和状态提交约束。
+- Simplified built-in tool parameter schemas for local inference compatibility while preserving argument validation and state submission guarantees.
 
 ## [v0.4.1] - 2026-09-06
 
